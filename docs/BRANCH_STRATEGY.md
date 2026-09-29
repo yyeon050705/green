@@ -4,11 +4,9 @@
 
 | 역할 | 담당자 | 브랜치 prefix | 담당 영역 |
 |---|---|---|---|
-| Backend | (이름 입력) | `backend/` | Express API, DB, 인증 로직 |
-| Frontend | (이름 입력) | `frontend/` | React 화면, 상태관리, API 연동 |
-| Design | (이름 입력) | `design/` | 와이어프레임, UI 스타일 가이드, 디자인 리소스 |
-
-> 담당자 이름은 실제 팀원 이름으로 교체해주세요.
+| Backend | 최한솔 | `backend/` | Express API, DB, 인증 로직 |
+| Frontend | 전하연 | `frontend/` | React 화면, 상태관리, API 연동 |
+| Design | 한승연 | `design/` | 와이어프레임, UI 스타일 가이드, 디자인 리소스 |
 
 ## 2. 브랜치 구조
 
