@@ -1,7 +1,6 @@
-/* 대상지 반경 토지용도·시설 분석 대시보드 - 프런트엔드 로직
+/* 대상지 반경 토지용도·시설 분석 대시보드 - 프런트엔드 로직 (OpenStreetMap 전용)
  * - 지도/검색: Leaflet + OpenStreetMap 타일 + Nominatim(서버 프록시)
- * - 주변 시설: OpenStreetMap Overpass API (서버 프록시)
- * - 토지이용: V-World Data API (서버 프록시, 인증키 필요)
+ * - 주변 시설 & 토지이용: OpenStreetMap Overpass API (서버 프록시)
  */
 
 const SERIES_COLORS = [
@@ -22,13 +21,37 @@ const FACILITY_GROUPS = [
   { key: 'healthcare', label: '의료' },
   { key: 'office', label: '업무/사무' },
   { key: 'craft', label: '공방/제조' },
-  { key: 'landuse', label: '토지이용(OSM)' },
 ];
+
+// OSM landuse=* 값에 대한 한글 표기 (없는 값은 원문 태그를 그대로 보여준다)
+const LANDUSE_LABELS = {
+  residential: '주거',
+  commercial: '상업',
+  retail: '상업(소매)',
+  industrial: '공업',
+  farmland: '농경지',
+  farmyard: '농경지(농가)',
+  orchard: '과수원',
+  forest: '산림',
+  meadow: '초지',
+  grass: '녹지',
+  cemetery: '묘지',
+  religious: '종교부지',
+  education: '교육시설',
+  recreation_ground: '체육/여가부지',
+  construction: '공사장',
+  brownfield: '유휴지',
+  greenfield: '개발예정지',
+  allotments: '텃밭',
+  garages: '차고지',
+  quarry: '채석장',
+  military: '군사시설',
+  railway: '철도부지',
+};
 
 const state = {
   center: null, // {lat, lon}
   radius: 750,
-  config: { hasVworldKey: false, defaultLanduseData: 'LT_C_UQ111' },
   facilityLayer: null,
   landuseLayer: null,
   circleLayer: null,
@@ -115,21 +138,6 @@ radiusRange.addEventListener('input', () => {
   drawRadiusCircle();
 });
 
-// ---------- 설정 모달 ----------
-const settingsModal = document.getElementById('settingsModal');
-document.getElementById('settingsToggle').addEventListener('click', () => {
-  document.getElementById('vworldKeyInput').value = localStorage.getItem('vworldKey') || '';
-  document.getElementById('vworldDataInput').value =
-    localStorage.getItem('vworldData') || state.config.defaultLanduseData || '';
-  settingsModal.classList.remove('hidden');
-});
-document.getElementById('settingsClose').addEventListener('click', () => settingsModal.classList.add('hidden'));
-document.getElementById('settingsSave').addEventListener('click', () => {
-  localStorage.setItem('vworldKey', document.getElementById('vworldKeyInput').value.trim());
-  localStorage.setItem('vworldData', document.getElementById('vworldDataInput').value.trim());
-  settingsModal.classList.add('hidden');
-});
-
 document.getElementById('themeToggle').addEventListener('click', () => {
   const root = document.documentElement;
   const current = root.getAttribute('data-theme');
@@ -154,15 +162,14 @@ document.getElementById('exportBtn').addEventListener('click', exportGeoJson);
 
 async function runAnalysis() {
   if (!state.center) return;
-  setStatus('분석 중... (OpenStreetMap + V-World 조회)', false);
+  setStatus('분석 중... (OpenStreetMap Overpass API 조회)', false);
   document.getElementById('analyzeBtn').disabled = true;
 
   const { lat, lon } = state.center;
-  const bbox = computeBBox(lat, lon, state.radius);
 
   const [facilityResult, landuseResult] = await Promise.allSettled([
     fetchFacilities(lat, lon, state.radius),
-    fetchLanduse(bbox),
+    fetchLanduse(lat, lon, state.radius),
   ]);
 
   if (facilityResult.status === 'fulfilled') {
@@ -178,7 +185,7 @@ async function runAnalysis() {
     console.error(landuseResult.reason);
     const msg = landuseResult.reason.message || '알 수 없는 오류';
     const prev = document.getElementById('statusMsg').textContent;
-    setStatus(`${prev ? prev + ' / ' : ''}V-World 토지이용 조회 실패: ${msg}`, true);
+    setStatus(`${prev ? prev + ' / ' : ''}OSM 토지이용 조회 실패: ${msg}`, true);
   }
 
   if (facilityResult.status === 'fulfilled' && landuseResult.status === 'fulfilled') {
@@ -194,14 +201,7 @@ function setStatus(msg, isError) {
   el.classList.toggle('error', isError);
 }
 
-// 중심점 + 반경(m) -> 대략적인 경위도 bbox (V-World bbox 질의용, 이후 turf로 정확히 필터링)
-function computeBBox(lat, lon, radiusM) {
-  const dLat = radiusM / 111320;
-  const dLon = radiusM / (111320 * Math.cos((lat * Math.PI) / 180));
-  return [lon - dLon, lat - dLat, lon + dLon, lat + dLat]; // minLon,minLat,maxLon,maxLat
-}
-
-// ---------- OSM Overpass: 주변 시설 ----------
+// ---------- OSM Overpass: 주변 시설 (점 형태) ----------
 async function fetchFacilities(lat, lon, radius) {
   const keys = FACILITY_GROUPS.map((g) => g.key);
   const clauses = keys
@@ -209,14 +209,7 @@ async function fetchFacilities(lat, lon, radius) {
     .join('\n  ');
   const query = `[out:json][timeout:25];\n(\n  ${clauses}\n);\nout center tags;`;
 
-  const r = await fetch('/api/overpass', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error);
-
+  const data = await callOverpass(query);
   const elements = data.elements || [];
   return elements.map((el) => {
     const p = el.type === 'node' ? { lat: el.lat, lon: el.lon } : el.center;
@@ -272,35 +265,36 @@ function renderFacilities(facilities) {
     });
 }
 
-// ---------- V-World: 토지이용 ----------
-async function fetchLanduse(bbox) {
-  const key = localStorage.getItem('vworldKey') || '';
-  const data = localStorage.getItem('vworldData') || state.config.defaultLanduseData;
-  const params = new URLSearchParams({ data, bbox: bbox.join(','), size: '1000', page: '1' });
-  if (key) params.set('key', key);
+// ---------- OSM Overpass: 토지이용 (면 형태, landuse=*) ----------
+async function fetchLanduse(lat, lon, radius) {
+  const query = `[out:json][timeout:25];\n(\n  way(around:${radius},${lat},${lon})["landuse"];\n);\nout geom;`;
+  const data = await callOverpass(query);
+  const elements = data.elements || [];
 
-  const r = await fetch(`/api/vworld/data?${params.toString()}`);
-  const json = await r.json();
-
-  if (json.error) throw new Error(json.error);
-  const featureCollection =
-    json?.response?.result?.featureCollection ||
-    json?.result?.featureCollection ||
-    (json.type === 'FeatureCollection' ? json : null);
-
-  if (!featureCollection) {
-    const serverMsg = json?.response?.status || json?.response?.error?.text;
-    throw new Error(serverMsg ? `V-World: ${serverMsg}` : 'V-World 응답에서 지오메트리를 찾지 못했습니다.');
-  }
-  return featureCollection.features || [];
+  return elements
+    .filter((el) => el.type === 'way' && Array.isArray(el.geometry) && el.geometry.length >= 4)
+    .map((el) => {
+      const coords = el.geometry.map((pt) => [pt.lon, pt.lat]);
+      const first = coords[0];
+      const last = coords[coords.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) coords.push(first); // 폴리곤 링 닫기
+      return {
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [coords] },
+        properties: { landuse: el.tags.landuse, name: el.tags.name || null, osm_id: el.id },
+      };
+    });
 }
 
-function guessLabelField(properties) {
-  const keys = Object.keys(properties || {});
-  const preferred = keys.find((k) => /name|nm|jimok|prpos|lclas|용도|지목/i.test(k));
-  if (preferred) return preferred;
-  const firstString = keys.find((k) => typeof properties[k] === 'string' && properties[k].length < 40);
-  return firstString || keys[0] || null;
+async function callOverpass(query) {
+  const r = await fetch('/api/overpass', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error);
+  return data;
 }
 
 function renderLanduse(features) {
@@ -327,7 +321,7 @@ function renderLanduse(features) {
         clippedAny = true;
       }
     } catch {
-      // 지오메트리가 유효하지 않으면(MultiPolygon 등) 원본 폴리곤을 그대로 사용
+      // 지오메트리가 유효하지 않으면 원본 폴리곤을 그대로 사용
     }
 
     let area = 0;
@@ -338,8 +332,8 @@ function renderLanduse(features) {
     }
     if (area <= 0) return;
 
-    const labelField = guessLabelField(feat.properties);
-    const label = labelField ? String(feat.properties[labelField]) : '미상';
+    const rawTag = feat.properties.landuse;
+    const label = LANDUSE_LABELS[rawTag] || rawTag || '미상';
 
     const g = groups.get(label) || { count: 0, area: 0 };
     g.count += 1;
@@ -354,9 +348,11 @@ function renderLanduse(features) {
       .addTo(state.landuseLayer);
   });
 
-  note.textContent = clippedAny
-    ? 'V-World 원본 필지 경계를 반경 범위로 잘라 면적을 계산했습니다.'
-    : 'V-World 응답 필지가 없거나 반경과 겹치는 부분이 없습니다. 데이터셋 코드/키를 확인하세요.';
+  note.textContent = features.length
+    ? (clippedAny
+        ? 'OSM landuse 폴리곤을 반경 범위로 잘라 면적을 계산했습니다. OSM 매핑 특성상 일부 구역은 태깅이 누락되어 실제와 다를 수 있습니다.'
+        : '조회된 landuse 구역이 반경과 겹치지 않습니다.')
+    : '이 반경 내에는 OSM에 landuse 태그가 매핑된 구역이 없습니다 (OSM 커뮤니티 매핑 특성상 지역별로 편차가 있습니다).';
 
   document.getElementById('statLanduseCount').textContent = features.length;
 
@@ -437,16 +433,3 @@ function exportGeoJson() {
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
-// ---------- 서버 설정 로드 ----------
-(async function init() {
-  try {
-    const r = await fetch('/api/config');
-    state.config = await r.json();
-    if (!state.config.hasVworldKey) {
-      setStatus('V-World API 키가 서버에 설정되어 있지 않습니다. 우측 상단 "설정"에서 키를 입력하거나 서버 .env를 구성하세요.', true);
-    }
-  } catch {
-    /* 설정 로드는 실패해도 앱 사용에는 지장 없음 */
-  }
-})();

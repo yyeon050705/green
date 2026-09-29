@@ -12,7 +12,6 @@
     <h1>대상지 반경 토지용도 · 시설 분석 대시보드</h1>
     <div class="topbar-actions">
       <button id="themeToggle" class="icon-btn" title="다크모드 전환" type="button">🌓</button>
-      <button id="settingsToggle" class="icon-btn" title="API 설정" type="button">⚙️ 설정</button>
     </div>
   </header>
 
@@ -43,7 +42,7 @@
         <h2>3. 요약</h2>
         <div id="summaryStats" class="summary-grid">
           <div class="stat-tile"><span class="stat-value" id="statFacilityCount">–</span><span class="stat-label">주변 시설 수 (OSM)</span></div>
-          <div class="stat-tile"><span class="stat-value" id="statLanduseCount">–</span><span class="stat-label">토지이용 필지/구역 수 (V-World)</span></div>
+          <div class="stat-tile"><span class="stat-value" id="statLanduseCount">–</span><span class="stat-label">토지이용 구역 수 (OSM)</span></div>
         </div>
       </section>
 
@@ -54,7 +53,7 @@
       </section>
 
       <section class="panel">
-        <h2>5. 토지이용 구성</h2>
+        <h2>5. 토지이용 구성 (OSM landuse)</h2>
         <div class="chart-wrap"><canvas id="landuseChart" height="220"></canvas></div>
         <div id="landuseLegend" class="legend"></div>
         <p id="landuseNote" class="hint"></p>
@@ -82,31 +81,6 @@
 
     <section id="map" class="map"></section>
   </main>
-
-  <div id="settingsModal" class="modal hidden">
-    <div class="modal-card">
-      <h2>API 설정</h2>
-      <p class="hint">
-        V-World(브이월드) Open API는 <a href="https://www.vworld.kr/dev" target="_blank" rel="noopener">www.vworld.kr/dev</a>
-        에서 발급받은 인증키가 필요합니다. 서버의 <code>.env</code>에 <code>VWORLD_API_KEY</code>를 설정해두면
-        여기 입력하지 않아도 동작합니다. 여기에 입력하면 이 브라우저에서 보낸 요청에 한해 서버 기본값 대신 사용됩니다.
-      </p>
-      <label>V-World API 키 (선택 입력)
-        <input id="vworldKeyInput" type="text" placeholder="서버 .env 값을 사용하려면 비워두세요" />
-      </label>
-      <label>토지이용 데이터셋 코드
-        <input id="vworldDataInput" type="text" placeholder="LT_C_UQ111" />
-      </label>
-      <p class="hint">
-        데이터셋 코드는 V-World 개발자센터의 데이터 API 문서에서 계정에 제공되는 실제 코드를 확인해 입력하세요.
-        (예: 용도지역지구, 연속지적도 등 레이어별 코드가 다르며 서비스 제공 범위에 따라 달라질 수 있습니다.)
-      </p>
-      <div class="modal-actions">
-        <button id="settingsSave" type="button" class="primary-btn">저장</button>
-        <button id="settingsClose" type="button" class="secondary-btn">닫기</button>
-      </div>
-    </div>
-  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
